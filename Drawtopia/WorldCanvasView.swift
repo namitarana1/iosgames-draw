@@ -1,19 +1,29 @@
 import SwiftUI
 
+/// Owns touch interaction and overlays while delegating all scene pixels to Metal.
+///
+/// Coordinates are normalized: one viewport is 1.0 units wide and the complete visible height is
+/// 1.0. A wider world simply allows x to exceed 1.0; `cameraX` selects which one-unit slice is seen.
 struct WorldCanvasView: View {
     @EnvironmentObject private var store: WorldStore
     @Binding var tool: CreatorTool
     let colorHex: String
     let isPlaying: Bool
 
+    /// Points in the finger-down stroke that has not yet been committed to the world.
     @State private var activePoints: [NormalizedPoint] = []
+    /// Play-mode avatar location is screen-relative because it represents the viewer, not scenery.
     @State private var explorer = CGPoint(x: 0.5, y: 0.72)
+
+    // Gesture state distinguishes moving an object from panning empty world space. A single
+    // DragGesture handles both so a zero-distance touch can also place, select, or erase an item.
     @State private var draggedItemID: UUID?
     @State private var selectedItemID: UUID?
     @State private var itemDragOffset = CGPoint.zero
     @State private var cameraX: Double = 0
     @State private var cameraAtDragStart: Double = 0
     @State private var isPanningScene = false
+    /// Nearby strokes are batched as one recognition candidate until accepted or explicitly kept.
     @State private var candidateStrokes: [DrawingStroke] = []
     @State private var suggestions: [ShapeSuggestion] = []
     @State private var recognitionTask: Task<Void, Never>?
@@ -34,6 +44,7 @@ struct WorldCanvasView: View {
                     cameraX: cameraX,
                     isPlaying: isPlaying
                 )
+                // The transparent representable must claim its whole rectangle for gestures.
                 .contentShape(Rectangle())
                 .gesture(worldGesture(in: geometry.size))
 
@@ -57,6 +68,7 @@ struct WorldCanvasView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Your Drawtopia world")
         .onChange(of: tool) { _, newTool in
+            // A mode change means the child has chosen to keep any unresolved freehand drawing.
             keepOriginalDrawing()
             if newTool != .build { selectedItemID = nil }
         }
@@ -75,6 +87,7 @@ struct WorldCanvasView: View {
         }
     }
 
+    /// Page controls provide an accessible alternative to swiping and expose scene expansion.
     private var sceneNavigator: some View {
         HStack(spacing: 6) {
             Button { moveCamera(by: -1) } label: {
@@ -112,6 +125,7 @@ struct WorldCanvasView: View {
         .background(.ultraThinMaterial, in: Capsule())
     }
 
+    /// A noninteractive teaching overlay that makes the semantic placement bands explicit.
     private var zoneGuide: some View {
         GeometryReader { proxy in
             zoneLabel("SKY", symbol: "bird.fill", color: .blue)
@@ -138,6 +152,7 @@ struct WorldCanvasView: View {
 
     private var maximumCameraX: Double { max(store.world.sceneWidth - 1, 0) }
 
+    /// Converts the continuous camera offset into a friendly one-based page number.
     private var cameraPage: Int {
         min(max(Int(cameraX.rounded()) + 1, 1), Int(ceil(store.world.sceneWidth)))
     }
@@ -157,6 +172,8 @@ struct WorldCanvasView: View {
         selectedItemID = nil
     }
 
+    /// Presents the highest-scoring recognition results without replacing artwork automatically.
+    /// The child always keeps final control: use a suggestion, keep the strokes, or name them.
     private var suggestionBar: some View {
         VStack(spacing: 8) {
             HStack {
@@ -203,6 +220,12 @@ struct WorldCanvasView: View {
         .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
     }
 
+    /// Interprets a touch according to the current creator mode.
+    ///
+    /// - Draw records world-space points, so artwork remains attached to scenery while panning.
+    /// - Build places a pending library object, drags a hit object, or pans from empty space.
+    /// - Erase removes the visually topmost object under the finger.
+    /// - Play moves the explorer in screen space while the world scrolls behind it.
     private func worldGesture(in size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
@@ -216,6 +239,8 @@ struct WorldCanvasView: View {
 
                 switch tool {
                 case .draw:
+                    // A new nearby stroke probably belongs to the same multi-stroke object. A far
+                    // stroke starts a fresh recognition group and leaves the earlier art intact.
                     if activePoints.isEmpty, !candidateStrokes.isEmpty {
                         if belongsToCurrentCandidate(location) {
                             recognitionTask?.cancel()
@@ -231,6 +256,8 @@ struct WorldCanvasView: View {
                         let start = worldPoint(from: startScreen)
 
                         if let shapeID = store.placementShapeID {
+                            // Placement becomes a drag immediately, allowing tap-and-position in
+                            // one continuous gesture instead of requiring a second interaction.
                             let id = store.add(shapeID, at: start)
                             draggedItemID = id
                             selectedItemID = id
@@ -244,6 +271,7 @@ struct WorldCanvasView: View {
                             )
                             store.bringItemToFront(item.id)
                         } else {
+                            // An empty-space drag navigates horizontally through the wider scene.
                             selectedItemID = nil
                             isPanningScene = true
                             cameraAtDragStart = cameraX
@@ -251,6 +279,7 @@ struct WorldCanvasView: View {
                     }
 
                     if isPanningScene {
+                        // Dividing pixel travel by viewport width converts it to world pages.
                         let travel = Double(value.translation.width / max(size.width, 1))
                         cameraX = min(max(cameraAtDragStart - travel, 0), maximumCameraX)
                         return
@@ -270,6 +299,7 @@ struct WorldCanvasView: View {
             }
             .onEnded { _ in
                 if !isPlaying, tool == .draw {
+                    // Width is stored with the stroke so saved art renders consistently later.
                     let stroke = DrawingStroke(points: activePoints, colorHex: colorHex, width: 7)
                     store.addStroke(stroke)
                     activePoints.removeAll(keepingCapacity: true)
@@ -283,6 +313,8 @@ struct WorldCanvasView: View {
             }
     }
 
+    /// Debounces recognition to let a child finish multi-stroke drawings such as a house or tree.
+    /// Cancellation is expected whenever another related stroke begins before the delay expires.
     private func scheduleRecognition() {
         recognitionTask?.cancel()
         let batch = candidateStrokes
@@ -301,6 +333,7 @@ struct WorldCanvasView: View {
         }
     }
 
+    /// Replaces exactly the strokes in the current batch, leaving unrelated artwork untouched.
     private func accept(_ suggestion: ShapeSuggestion) {
         recognitionTask?.cancel()
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
@@ -310,6 +343,7 @@ struct WorldCanvasView: View {
         }
     }
 
+    /// Stores a normalized copy in the personal library while keeping the original scene strokes.
     private func saveCustomShape() {
         recognitionTask?.cancel()
         guard store.saveCustomShape(name: customShapeName, from: candidateStrokes) != nil else { return }
@@ -318,12 +352,15 @@ struct WorldCanvasView: View {
         suggestions.removeAll()
     }
 
+    /// Ends recognition for the batch; committed strokes already remain in `world.strokes`.
     private func keepOriginalDrawing() {
         recognitionTask?.cancel()
         candidateStrokes.removeAll()
         suggestions.removeAll()
     }
 
+    /// Uses an expanded bounding box to decide whether a new stroke belongs to the pending object.
+    /// The adaptive margin accepts detached details (windows, leaves) without grouping distant art.
     private func belongsToCurrentCandidate(_ point: CGPoint) -> Bool {
         let points = candidateStrokes.flatMap { $0.points.map(\.cgPoint) }
         guard let first = points.first else { return false }
@@ -343,6 +380,7 @@ struct WorldCanvasView: View {
             && point.y >= bounds.minY - margin && point.y <= bounds.maxY + margin
     }
 
+    /// Converts UIKit points into a safely inset 0...1 viewport coordinate.
     private func normalized(_ point: CGPoint, in size: CGSize) -> CGPoint {
         CGPoint(
             x: min(max(point.x / max(size.width, 1), 0.02), 0.98),
@@ -350,10 +388,12 @@ struct WorldCanvasView: View {
         )
     }
 
+    /// Adds the horizontal camera origin; vertical coordinates do not scroll.
     private func worldPoint(from screenPoint: CGPoint) -> CGPoint {
         CGPoint(x: screenPoint.x + cameraX, y: screenPoint.y)
     }
 
+    /// Hit-tests in reverse painter's order so the visible top object wins when shapes overlap.
     private func item(at point: CGPoint, in size: CGSize, maximumDistance: CGFloat? = nil) -> WorldItem? {
         store.world.items.reversed().first { item in
             let hitRadius = maximumDistance ?? max(0.10, 0.09 * item.scale)
@@ -361,6 +401,7 @@ struct WorldCanvasView: View {
         }
     }
 
+    /// Mirrors the render-time placement constraint so hit testing matches the visible object.
     private func displayedY(for item: WorldItem, in _: CGSize) -> Double {
         SceneLayout.constrainedY(for: item.shapeID, proposedY: item.y)
     }

@@ -2,6 +2,11 @@ import Foundation
 import CoreGraphics
 import UIKit
 
+/// One built-in shape decoded from `ShapeCatalog.json`.
+///
+/// Shapes may provide explicit polygon paths for distinct silhouettes or rely on an SF Symbol.
+/// Recognition keywords are intentionally data-only so the catalog can grow without recompiling
+/// matching logic or user-interface code.
 struct ShapeTemplate: Decodable {
     let id: String
     let displayName: String
@@ -12,9 +17,11 @@ struct ShapeTemplate: Decodable {
     let paths: [[[Double]]]?
 
     var resolvedSymbolName: String {
+        // Catalog mistakes degrade to an obvious placeholder instead of producing a blank object.
         UIImage(systemName: symbolName) == nil ? "questionmark.circle.fill" : symbolName
     }
 
+    /// Validates loosely typed JSON coordinate pairs and exposes Core Graphics points to callers.
     var vectorPaths: [[CGPoint]]? {
         guard let paths, !paths.isEmpty else { return nil }
         let converted = paths.map { path in
@@ -27,6 +34,7 @@ struct ShapeTemplate: Decodable {
     }
 }
 
+/// A display-ready recognition result. Confidence is advisory; the child still chooses the result.
 struct ShapeSuggestion: Identifiable {
     var id: String { shapeID }
     let shapeID: String
@@ -36,6 +44,7 @@ struct ShapeSuggestion: Identifiable {
     let confidence: Double
 }
 
+/// Lazily loaded, immutable indexes over the bundled catalog.
 enum ShapeCatalog {
     static let templates: [ShapeTemplate] = {
         guard let url = Bundle.main.url(forResource: "ShapeCatalog", withExtension: "json"),
@@ -49,6 +58,7 @@ enum ShapeCatalog {
     static let byID: [String: ShapeTemplate] = Dictionary(uniqueKeysWithValues: templates.map { ($0.id, $0) })
 }
 
+/// Produces bitmap versions of SF Symbol-backed catalog entries for both Metal and SwiftUI.
 enum ShapeRasterizer {
     static func image(for template: ShapeTemplate, size: CGFloat, tintOverride: UIColor? = nil) -> UIImage {
         let renderSize = CGSize(width: size, height: size)
@@ -57,6 +67,9 @@ enum ShapeRasterizer {
             let fallback = UIImage(systemName: "questionmark.circle.fill", withConfiguration: configuration)!
             let symbol = UIImage(systemName: template.symbolName, withConfiguration: configuration) ?? fallback
             let tint = tintOverride ?? UIColor(hexString: template.tintHex)
+            // When multiple catalog concepts share one system glyph, apply a stable geometric
+            // variant. This keeps their silhouettes observably different rather than changing
+            // color alone, while explicit vector entries retain their authored geometry.
             let variant = geometryVariant(for: template)
             let context = rendererContext.cgContext
 
@@ -73,6 +86,7 @@ enum ShapeRasterizer {
     }
 
     private static func geometryVariant(for template: ShapeTemplate) -> GeometryVariant {
+        // Sorting by id makes transformations deterministic across app launches and devices.
         let duplicates = ShapeCatalog.templates
             .filter { $0.symbolName == template.symbolName && $0.vectorPaths == nil }
             .sorted { $0.id < $1.id }
@@ -98,9 +112,16 @@ enum ShapeRasterizer {
     }
 }
 
+/// A small, on-device contour matcher; no drawing or child data leaves the device.
+///
+/// It is intentionally tolerant of translation, scale, direction, and sampling speed. Rotation is
+/// retained because orientation is meaningful for objects such as a vertical tree or horizontal
+/// car. Aspect ratio and stroke count provide gentle tie-breakers rather than hard requirements.
 enum ShapeMatcher {
+    /// Raster contours are moderately expensive to extract, so compute each catalog entry once.
     private static var contourCache: [String: [CGPoint]] = [:]
 
+    /// Returns the lowest-distance catalog/custom candidates, best match first.
     static func suggestions(
         for strokes: [DrawingStroke],
         customShapes: [CustomShapeDefinition] = [],
@@ -109,6 +130,7 @@ enum ShapeMatcher {
         let rawDrawing = strokes.flatMap { $0.points.map(\.cgPoint) }
         guard rawDrawing.count >= 5 else { return [] }
 
+        // Center and uniformly scale before comparison; uniform scaling preserves aspect ratio.
         let drawing = normalize(rawDrawing)
         let drawingAspect = aspectRatio(rawDrawing)
 
@@ -121,6 +143,8 @@ enum ShapeMatcher {
                 candidatePoints: templatePoints,
                 candidateStrokeCount: template.paths?.count ?? 1
             )
+            // A tiny preference for authored contours compensates for noise introduced by sampling
+            // rasterized system symbols. It is far too small to overpower an actual close match.
             let total = max(0, rawScore - (template.paths == nil ? 0 : 0.025))
             let confidence = max(0.18, min(0.98, 1 - total / 0.58))
             return (
@@ -171,6 +195,8 @@ enum ShapeMatcher {
         candidatePoints: [CGPoint],
         candidateStrokeCount: Int
     ) -> Double {
+        // Symmetric Chamfer distance measures silhouette similarity without requiring corresponding
+        // point counts. Log aspect error treats a 2:1 vs 1:1 mismatch like 1:2 vs 1:1.
         let shapeDistance = chamferDistance(drawing, normalize(candidatePoints))
         let candidateAspect = aspectRatio(candidatePoints)
         let aspectPenalty = abs(log(max(drawingAspect, 0.05) / max(candidateAspect, 0.05))) * 0.07
@@ -182,6 +208,8 @@ enum ShapeMatcher {
         if let cached = contourCache[template.id] { return cached }
         let result: [CGPoint]
         if let paths = template.paths, !paths.isEmpty {
+            // Densification prevents a polygon with few vertices from receiving an unfair score
+            // against a finger stroke that naturally contains dozens of sampled points.
             result = paths.flatMap { densifyClosed($0.compactMap(point(from:))) }
         } else {
             result = symbolContour(for: template)
@@ -191,6 +219,8 @@ enum ShapeMatcher {
     }
 
     private static func symbolContour(for template: ShapeTemplate) -> [CGPoint] {
+        // Render at a fixed small resolution, then keep boundary pixels only. Interior pixels would
+        // overweight filled shapes and make the score depend on area rather than outline.
         let size = 64
         let image = ShapeRasterizer.image(for: template, size: CGFloat(size), tintOverride: .black)
         guard let cgImage = image.cgImage else { return [] }
@@ -206,12 +236,14 @@ enum ShapeMatcher {
         ) else { return [] }
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: size, height: size))
 
+        /// Safely samples alpha; coordinates outside the image are considered transparent.
         func opaque(_ x: Int, _ y: Int) -> Bool {
             guard x >= 0, x < size, y >= 0, y < size else { return false }
             return pixels[(y * size + x) * 4 + 3] > 70
         }
 
         var result: [CGPoint] = []
+        // A two-pixel stride is a useful accuracy/performance balance for a live suggestion UI.
         for y in stride(from: 1, to: size - 1, by: 2) {
             for x in stride(from: 1, to: size - 1, by: 2) where opaque(x, y) {
                 if !opaque(x - 2, y) || !opaque(x + 2, y) || !opaque(x, y - 2) || !opaque(x, y + 2) {
@@ -223,6 +255,8 @@ enum ShapeMatcher {
     }
 
     static func placement(for strokes: [DrawingStroke]) -> (point: CGPoint, scale: Double) {
+        // Replacement objects inherit the drawing's center and a bounded scale derived from its
+        // largest dimension. The multiplier maps unit-world drawing size to catalog object size.
         let points = strokes.flatMap { $0.points.map(\.cgPoint) }
         guard let first = points.first else { return (CGPoint(x: 0.5, y: 0.5), 1) }
         let bounds = points.dropFirst().reduce(
@@ -243,6 +277,7 @@ enum ShapeMatcher {
     }
 
     private static func densify(_ points: [CGPoint]) -> [CGPoint] {
+        // Ten evenly spaced samples per segment make comparison independent of vertex spacing.
         guard points.count > 1 else { return points }
         return zip(points, points.dropFirst()).flatMap { start, end in
             (0..<10).map { step in
@@ -258,6 +293,7 @@ enum ShapeMatcher {
     }
 
     private static func normalize(_ points: [CGPoint]) -> [CGPoint] {
+        // Uniform scaling around the bounds center removes location and size but not proportions.
         guard let first = points.first else { return [] }
         let bounds = points.dropFirst().reduce(
             (minX: first.x, maxX: first.x, minY: first.y, maxY: first.y)
@@ -283,6 +319,8 @@ enum ShapeMatcher {
 
     private static func chamferDistance(_ lhs: [CGPoint], _ rhs: [CGPoint]) -> Double {
         guard !lhs.isEmpty, !rhs.isEmpty else { return 1 }
+        // Compute both directions: a one-way measure could call a tiny subset a perfect match for a
+        // much more complex outline simply because every subset point is near the larger shape.
         func oneWay(_ from: [CGPoint], _ to: [CGPoint]) -> Double {
             from.reduce(0) { sum, point in
                 let nearest = to.lazy.map { hypot(point.x - $0.x, point.y - $0.y) }.min() ?? 1
@@ -293,6 +331,7 @@ enum ShapeMatcher {
     }
 }
 
+/// UIKit color parsing used by the rasterizer; SwiftUI and Metal have parallel lightweight helpers.
 private extension UIColor {
     convenience init(hexString: String) {
         let value = UInt64(hexString.replacingOccurrences(of: "#", with: ""), radix: 16) ?? 0

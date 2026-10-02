@@ -1,5 +1,6 @@
 import SwiftUI
 
+/// The top-level adaptive editor: a full-screen Metal canvas plus SwiftUI creation controls.
 struct ContentView: View {
     @EnvironmentObject private var store: WorldStore
     @State private var tool: CreatorTool = .draw
@@ -10,11 +11,13 @@ struct ContentView: View {
     @State private var showClearConfirmation = false
     @State private var showShapeLibrary = false
 
+    /// A deliberately short, high-contrast palette that remains easy to scan on an iPhone.
     private let palette = ["#6C4CF1", "#EF476F", "#FF9F1C", "#06D6A0", "#118AB2", "#2D3142", "#FFFFFF"]
 
     var body: some View {
         NavigationStack {
             GeometryReader { proxy in
+                // iPad keeps a framed canvas; compact iPhones devote every possible point to it.
                 let compact = proxy.size.width < 700
 
                 VStack(spacing: 0) {
@@ -68,6 +71,7 @@ struct ContentView: View {
             }
         }
         .tint(Color(hex: "#6C4CF1"))
+        // Creator tools provide their own chrome, so the app uses the entire physical display.
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .ignoresSafeArea(.container, edges: [.top, .horizontal])
@@ -83,6 +87,8 @@ struct ContentView: View {
     }
 
     @ViewBuilder
+    /// Builds the contextual bottom tray. Only controls relevant to the active tool are shown,
+    /// which reduces reading and decision load for the app's 9–12-year-old audience.
     private func creatorControls(compact: Bool) -> some View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
@@ -123,6 +129,8 @@ struct ContentView: View {
                         .buttonStyle(.bordered)
                         .disabled(store.world.strokes.isEmpty)
                     } else if tool == .build {
+                        // With a pending shape the next tap places it; otherwise dragging an
+                        // existing item moves it and swiping empty space pans through the world.
                         Label(
                             store.placementShapeID == nil ? "Drag objects • swipe empty space" : "Tap anywhere to place",
                             systemImage: store.placementShapeID == nil ? "hand.draw.fill" : "mappin.and.ellipse"
@@ -171,6 +179,7 @@ struct ContentView: View {
     }
 
     @ToolbarContentBuilder
+    /// Global scene controls remain reachable in both compact and regular layouts.
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarLeading) {
             Button { showTerrain = true } label: {
@@ -200,6 +209,7 @@ struct ContentView: View {
     }
 }
 
+/// Searchable access to the built-in catalog and the child's reusable custom symbols.
 private struct ShapeLibraryView: View {
     @EnvironmentObject private var store: WorldStore
     @Environment(\.dismiss) private var dismiss
@@ -208,6 +218,7 @@ private struct ShapeLibraryView: View {
 
     private let columns = [GridItem(.adaptive(minimum: 86), spacing: 12)]
 
+    /// Category names are data-driven so adding catalog entries requires no SwiftUI changes.
     private var categories: [String] {
         ["All"] + (store.customShapes.isEmpty ? [] : ["My Shapes"])
             + Array(Set(ShapeCatalog.templates.map(\.category))).sorted()
@@ -266,6 +277,8 @@ private struct ShapeLibraryView: View {
                             }
                             .buttonStyle(.plain)
                             .contextMenu {
+                                // Deletion is intentionally tucked into a context menu to prevent
+                                // an easy accidental tap from removing a child's reusable artwork.
                                 Button("Delete Shape", systemImage: "trash", role: .destructive) {
                                     store.deleteCustomShape(shape.id)
                                 }
@@ -311,6 +324,9 @@ private struct ShapeLibraryView: View {
     }
 }
 
+/// A lightweight library thumbnail that mirrors the shape source used by the Metal renderer.
+/// Vector catalog entries stay crisp at any size; SF Symbols use the shared rasterizer so geometry
+/// variants in the library and in the world remain visually identical.
 struct ShapeArtworkView: View {
     let shape: ShapeTemplate
     let dimension: CGFloat
@@ -319,6 +335,7 @@ struct ShapeArtworkView: View {
     var body: some View {
         if let paths = shape.vectorPaths {
             Canvas { context, canvasSize in
+                // Catalog coordinates are normalized to 0...1 and expanded into this thumbnail.
                 for polygon in paths {
                     guard let first = polygon.first else { continue }
                     var path = Path()

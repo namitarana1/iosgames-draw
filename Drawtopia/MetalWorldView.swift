@@ -1,6 +1,10 @@
 import SwiftUI
 import MetalKit
 
+/// SwiftUI bridge for the app's Metal renderer.
+///
+/// SwiftUI owns state and layout, while `MTKView` owns the actual scene surface. This separation
+/// keeps gestures and controls idiomatic without falling back to a 2D Canvas for world rendering.
 struct MetalWorldView: UIViewRepresentable {
     let world: DrawtopiaWorld
     let customShapes: [CustomShapeDefinition]
@@ -14,6 +18,7 @@ struct MetalWorldView: UIViewRepresentable {
 
     func makeCoordinator() -> MetalWorldRenderer { MetalWorldRenderer() }
 
+    /// Creates the Metal surface once and compiles both solid-color and textured pipelines.
     func makeUIView(context: Context) -> MTKView {
         guard let device = MTLCreateSystemDefaultDevice() else {
             preconditionFailure("Drawtopia requires a Metal-capable device")
@@ -22,12 +27,15 @@ struct MetalWorldView: UIViewRepresentable {
         view.delegate = context.coordinator
         view.colorPixelFormat = .bgra8Unorm
         view.preferredFramesPerSecond = 60
+        // Creator mode renders only when state changes; Play mode switches to a continuous 60 fps
+        // loop in `updateUIView`. Avoiding idle frames reduces heat and battery use while drawing.
         view.isPaused = true
         view.enableSetNeedsDisplay = true
         context.coordinator.prepare(device: device, pixelFormat: view.colorPixelFormat)
         return view
     }
 
+    /// Copies the latest value-type model into the long-lived renderer coordinator.
     func updateUIView(_ view: MTKView, context: Context) {
         context.coordinator.world = world
         context.coordinator.customShapes = customShapes
@@ -44,7 +52,11 @@ struct MetalWorldView: UIViewRepresentable {
     }
 }
 
+/// Immediate-mode Metal renderer for terrain, strokes, objects, animation, and effects.
+/// All CPU-side positions use normalized top-left coordinates; the vertex shader converts them to
+/// Metal's clip space. This makes the same scene data resolution-independent on iPhone and iPad.
 final class MetalWorldRenderer: NSObject, MTKViewDelegate {
+    // These values are supplied by SwiftUI before each requested frame.
     var world = DrawtopiaWorld()
     var customShapes: [CustomShapeDefinition] = []
     var selectedItemID: UUID?
@@ -55,6 +67,8 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
     var cameraX: Double = 0
     var isPlaying = false
 
+    // Metal resources live for the coordinator's lifetime. Textures are cached by catalog id so an
+    // SF Symbol is rasterized and uploaded only once, even when many copies appear in the world.
     private var device: MTLDevice?
     private var commandQueue: MTLCommandQueue?
     private var pipeline: MTLRenderPipelineState?
@@ -65,6 +79,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
     private var animationTime: Double = 0
     private var renderCameraX: Double = 0
 
+    /// Resets animation phase only on the transition into Play, not on routine SwiftUI updates.
     func setPlaying(_ playing: Bool) {
         if playing, !isPlaying {
             animationStart = CACurrentMediaTime()
@@ -72,10 +87,13 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         isPlaying = playing
     }
 
+    /// Compiles two tiny shader pipelines: vertex-colored geometry and alpha-blended artwork.
     func prepare(device: MTLDevice, pixelFormat: MTLPixelFormat) {
         self.device = device
         commandQueue = device.makeCommandQueue()
 
+        // The solid vertex shader maps 0...1 top-left UI coordinates to -1...1 bottom-left clip
+        // coordinates. The texture shader performs the same transform while passing UV values.
         let shaderSource = """
         #include <metal_stdlib>
         using namespace metal;
@@ -111,6 +129,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
             descriptor.vertexFunction = library.makeFunction(name: "vertex_main")
             descriptor.fragmentFunction = library.makeFunction(name: "fragment_main")
             descriptor.colorAttachments[0].pixelFormat = pixelFormat
+            // Conventional source-alpha blending is required for translucent weather and edges.
             descriptor.colorAttachments[0].isBlendingEnabled = true
             descriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
             descriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
@@ -129,10 +148,12 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    /// Captures drawable aspect ratio so authored circles and objects stay visually proportional.
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         pixelAspect = size.height > 0 ? size.width / size.height : 1
     }
 
+    /// Encodes one frame in painter's order: terrain, drawings, objects, avatar, then weather.
     func draw(in view: MTKView) {
         guard let drawable = view.currentDrawable,
               let pass = view.currentRenderPassDescriptor,
@@ -141,6 +162,8 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
               let commandBuffer = queue.makeCommandBuffer() else { return }
 
         animationTime = CACurrentMediaTime() - animationStart
+        // Play mode advances the camera automatically and wraps through the full scene. Creator
+        // mode uses the exact manually selected page so placed objects never drift under a finger.
         renderCameraX = isPlaying
             ? positiveRemainder(cameraX + animationTime * 0.075, modulus: world.sceneWidth)
             : cameraX
@@ -157,6 +180,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         polyline(activePoints, color: activeColor, encoder: encoder)
         for item in world.items {
             let renderedItem = renderItem(item)
+            // Cull with a small margin so large objects enter smoothly at screen edges.
             guard renderedItem.x > -0.2, renderedItem.x < 1.2 else { continue }
             draw(renderedItem, encoder: encoder)
             if item.id == selectedItemID { drawSelection(around: renderedItem, encoder: encoder) }
@@ -169,6 +193,8 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         commandBuffer.commit()
     }
 
+    /// Draws terrain as multiple parallax layers. Near details track the camera fully, mountains
+    /// move more slowly, and sky objects move least, creating depth while the background travels.
     private func drawTerrain(_ terrain: Terrain, encoder: MTLRenderCommandEncoder) {
         let distantShift = positiveRemainder(renderCameraX * 0.48, modulus: 1.44)
         let skyShift = positiveRemainder(renderCameraX * 0.12, modulus: 1.2)
@@ -184,6 +210,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
             drawRollingHills(offset: distantShift, color: GPUColor(0.82, 0.42, 0.17), encoder: encoder)
             drawMovingGroundDetails(for: terrain, encoder: encoder)
         case .ocean:
+            // Alternating directions and per-row rates prevent the water from reading as one slab.
             for row in 0..<6 {
                 let direction = row.isMultiple(of: 2) ? 1.0 : -1.0
                 let layerShift = renderCameraX * (0.42 + Double(row) * 0.08)
@@ -193,6 +220,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
             drawMovingGroundDetails(for: terrain, encoder: encoder)
         case .moon:
             rectangle(center: CGPoint(x: 0.5, y: 0.88), size: CGSize(width: 1.2, height: 0.28), color: GPUColor(0.46, 0.46, 0.58), encoder: encoder)
+            // Integer arithmetic provides deterministic star positions without storing particles.
             for seed in 0..<18 {
                 let starX = positiveRemainder(Double((seed * 47 + 31) % 101) / 100 - skyShift * 0.22, modulus: 1)
                 let p = CGPoint(x: starX, y: Double((seed * 71 + 13) % 67) / 100)
@@ -202,6 +230,8 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    /// Selects the correct representation for a placed item: articulated animal, custom vector,
+    /// catalog polygon, or textured SF Symbol fallback.
     private func draw(_ item: WorldItem, encoder: MTLRenderCommandEncoder) {
         if isPlaying, let style = animalMotionStyle(for: item.shapeID), style != .still {
             drawAnimatedAnimal(item, style: style, encoder: encoder)
@@ -223,6 +253,8 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
               let texturePipeline,
               let pipeline else { return }
 
+        // A textured item is two triangles. `pixelAspect` compensates normalized y coordinates for
+        // the view's physical aspect ratio, preventing square artwork from appearing stretched.
         let halfWidth = 0.075 * item.scale
         let halfHeight = halfWidth * pixelAspect
         let x = item.x, y = item.y
@@ -243,6 +275,9 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         encoder.setRenderPipelineState(pipeline)
     }
 
+    /// Expands normalized catalog polygons around the item's center and triangulates each as a fan.
+    /// Catalog paths are authored as simple convex silhouettes; concave assets should be split into
+    /// multiple paths in JSON so every fan remains valid.
     private func draw(_ definition: ShapeTemplate, as item: WorldItem, encoder: MTLRenderCommandEncoder) {
         guard let paths = definition.vectorPaths else { return }
         let halfWidth = 0.075 * item.scale
@@ -266,6 +301,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    /// Renders child-authored custom shapes as line strips, preserving their original stroke style.
     private func draw(_ custom: CustomShapeDefinition, as item: WorldItem, encoder: MTLRenderCommandEncoder) {
         let halfWidth = 0.075 * item.scale
         let halfHeight = halfWidth * pixelAspect
@@ -284,6 +320,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    /// Rasterizes an SF Symbol to a GPU texture on first use, then reuses the uploaded texture.
     private func texture(for definition: ShapeTemplate) -> MTLTexture? {
         if let cached = textureCache[definition.id] { return cached }
         guard let device else { return nil }
@@ -297,12 +334,18 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         return texture
     }
 
+    /// Draws a simple screen-space explorer avatar above the scrolling world in Play mode.
     private func drawExplorer(at p: CGPoint, encoder: MTLRenderCommandEncoder) {
         circle(center: CGPoint(x: p.x, y: p.y - 0.035), radius: 0.048, color: GPUColor(0.94, 0.96, 1, 0.8), encoder: encoder)
         circle(center: CGPoint(x: p.x, y: p.y - 0.035), radius: 0.034, color: GPUColor(1, 0.82, 0.58), encoder: encoder)
         rectangle(center: CGPoint(x: p.x, y: p.y + 0.035), size: CGSize(width: 0.065, height: 0.09), color: GPUColor(0.45, 0.30, 0.86), encoder: encoder)
     }
 
+    /// Produces a temporary screen-space item without mutating the saved model.
+    ///
+    /// Animals travel independently through world space; their UUID seeds subtle speed and phase
+    /// variation so a group does not march in lockstep. Vertical motion depends on locomotion type,
+    /// and the placement constraint is reapplied afterward so land creatures never float.
     private func renderItem(_ item: WorldItem) -> WorldItem {
         var rendered = item
         var worldX = item.x
@@ -329,11 +372,13 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         return rendered
     }
 
+    /// Uses catalog semantics, rather than id spelling, to determine whether an item may locomote.
     private func isAnimal(_ shapeID: String) -> Bool {
         guard let category = ShapeCatalog.byID[shapeID]?.category else { return false }
         return category == "Animals" || category == "Wildlife"
     }
 
+    /// Maps animals to locomotion rigs. Unknown animal entries get the general quadruped gait.
     private func animalMotionStyle(for shapeID: String) -> AnimalMotionStyle? {
         guard isAnimal(shapeID) else { return nil }
         switch shapeID {
@@ -347,6 +392,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    /// Dispatches an animal to its procedural rig with a stable per-instance phase offset.
     private func drawAnimatedAnimal(_ item: WorldItem, style: AnimalMotionStyle, encoder: MTLRenderCommandEncoder) {
         let color = GPUColor(hex: ShapeCatalog.byID[item.shapeID]?.tintHex ?? "#9C6644")
         let seed = item.id.uuidString.unicodeScalars.reduce(0) { $0 + Int($1.value) }
@@ -369,6 +415,9 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    /// Four-beat quadruped gait with diagonal limb pairs out of phase.
+    /// Each leg has hip, knee, and foot points so it bends rather than rotating as a rigid stick;
+    /// the body stays grounded while the tail uses a slower independent wag.
     private func drawQuadruped(_ item: WorldItem, color: GPUColor, phase: Double, encoder: MTLRenderCommandEncoder) {
         let w = 0.075 * item.scale
         let h = w * pixelAspect
@@ -406,6 +455,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         circle(center: CGPoint(x: item.x + w * 0.67, y: item.y - h * 0.43), radius: w * 0.035, color: GPUColor(0.08, 0.08, 0.08), segments: 10, encoder: encoder)
     }
 
+    /// Two-beat bird walk with alternating feet and a body/head/beak silhouette.
     private func drawWalkingBird(_ item: WorldItem, color: GPUColor, phase: Double, encoder: MTLRenderCommandEncoder) {
         let w = 0.075 * item.scale
         let h = w * pixelAspect
@@ -422,6 +472,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         triangle(CGPoint(x: item.x + w * 0.68, y: item.y - h * 0.52), CGPoint(x: item.x + w, y: item.y - h * 0.40), CGPoint(x: item.x + w * 0.68, y: item.y - h * 0.31), GPUColor(0.95, 0.62, 0.12), encoder)
     }
 
+    /// Symmetric wing flap for birds and insects; vertical travel is applied by `renderItem`.
     private func drawFlyingAnimal(_ item: WorldItem, color: GPUColor, phase: Double, encoder: MTLRenderCommandEncoder) {
         let w = 0.075 * item.scale
         let h = w * pixelAspect
@@ -432,6 +483,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         triangle(CGPoint(x: item.x + w * 0.28, y: item.y - h * 0.10), CGPoint(x: item.x + w * 0.72, y: item.y), CGPoint(x: item.x + w * 0.28, y: item.y + h * 0.10), GPUColor(0.95, 0.67, 0.16), encoder)
     }
 
+    /// Fish rig with a sinusoidal tail and a darker pectoral fin to communicate propulsion.
     private func drawSwimmingAnimal(_ item: WorldItem, color: GPUColor, phase: Double, encoder: MTLRenderCommandEncoder) {
         let w = 0.075 * item.scale
         let h = w * pixelAspect
@@ -442,6 +494,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         circle(center: CGPoint(x: item.x + w * 0.34, y: item.y - h * 0.12), radius: w * 0.035, color: GPUColor(0.05, 0.05, 0.08), segments: 9, encoder: encoder)
     }
 
+    /// Compresses and extends rear legs in phase with the whole-body hop from `renderItem`.
     private func drawHoppingAnimal(_ item: WorldItem, color: GPUColor, phase: Double, encoder: MTLRenderCommandEncoder) {
         let w = 0.075 * item.scale
         let h = w * pixelAspect
@@ -454,6 +507,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         thickSegment(from: CGPoint(x: item.x + w * 0.48, y: item.y - h * 0.62), to: CGPoint(x: item.x + w * 0.55, y: item.y - h), width: w * 0.11, color: color, encoder: encoder)
     }
 
+    /// Uses a traveling sine wave for snakes and alternating small legs for other crawlers.
     private func drawCrawlingAnimal(_ item: WorldItem, color: GPUColor, phase: Double, encoder: MTLRenderCommandEncoder) {
         let w = 0.075 * item.scale
         let h = w * pixelAspect
@@ -480,6 +534,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    /// Converts a mathematical line segment to a six-vertex rectangle with predictable thickness.
     private func thickSegment(from start: CGPoint, to end: CGPoint, width: Double, color: GPUColor, encoder: MTLRenderCommandEncoder) {
         let dx = end.x - start.x
         let dy = end.y - start.y
@@ -496,6 +551,8 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         ], primitive: .triangle, encoder: encoder)
     }
 
+    /// Converts world x to viewport x. Play-mode wrapping lets objects re-enter from the left after
+    /// passing the far edge of a multi-page scene; creator mode never wraps while editing.
     private func screenX(_ worldX: Double) -> Double {
         var result = worldX - renderCameraX
         if isPlaying {
@@ -506,6 +563,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         return result
     }
 
+    /// Repeating desert silhouettes form the middle-distance parallax layer.
     private func drawRollingHills(offset: Double, color: GPUColor, encoder: MTLRenderCommandEncoder) {
         for index in -2...5 {
             let x = Double(index) * 0.48 - offset
@@ -519,6 +577,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    /// Neutral rock and snow colors keep mountains distinct from plantable green land.
     private func drawRockyMountains(offset: Double, encoder: MTLRenderCommandEncoder) {
         for index in -2...5 {
             let x = Double(index) * 0.48 - offset
@@ -544,6 +603,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    /// Repeats terrain-specific near-field details at camera speed to anchor background movement.
     private func drawMovingGroundDetails(for terrain: Terrain, encoder: MTLRenderCommandEncoder) {
         let spacing = 0.24
         let shift = positiveRemainder(renderCameraX, modulus: spacing)
@@ -578,6 +638,8 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    /// Procedurally animates the selected optional effect. Effects are Play-only and Clear produces
+    /// no particles, so rain/snow/clouds/wind never appear merely because the app is open.
     private func drawWeather(_ weather: SceneWeather, encoder: MTLRenderCommandEncoder) {
         guard isPlaying, weather != .clear else { return }
         let time = animationTime
@@ -607,6 +669,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
             return
         }
 
+        // Stable integer seeds make particle positions deterministic and allocation-free per frame.
         for seed in 0..<54 {
             let startX = Double((seed * 43 + 17) % 101) / 100
             let startY = Double((seed * 71 + 9) % 103) / 100
@@ -638,6 +701,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    /// Builds a soft cloud from overlapping alpha-blended primitives.
     private func drawCloud(center: CGPoint, scale: Double, encoder: MTLRenderCommandEncoder) {
         let shadow = GPUColor(0.70, 0.76, 0.84, 0.82)
         let highlight = GPUColor(0.88, 0.91, 0.95, 0.92)
@@ -652,12 +716,15 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         circle(center: CGPoint(x: center.x + 0.050 * scale, y: center.y + 0.002 * scale), radius: 0.032 * scale, color: highlight, segments: 18, encoder: encoder)
     }
 
+    /// Unlike Swift's remainder operator, always returns a value in `0..<modulus` for valid input.
+    /// This is needed when the child pans left and when particles wrap across an edge.
     private func positiveRemainder(_ value: Double, modulus: Double) -> Double {
         guard modulus > 0 else { return value }
         let result = value.truncatingRemainder(dividingBy: modulus)
         return result >= 0 ? result : result + modulus
     }
 
+    /// Draws a lightweight bounding rectangle around the Build-mode selection.
     private func drawSelection(around item: WorldItem, encoder: MTLRenderCommandEncoder) {
         let halfWidth = 0.095 * item.scale
         let halfHeight = halfWidth * pixelAspect
@@ -672,11 +739,15 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         submit(points.map { GPUVertex($0, color) }, primitive: .lineStrip, encoder: encoder)
     }
 
+    /// Maps saved world-space stroke x coordinates through the current camera before submission.
     private func polyline(_ points: [NormalizedPoint], color: GPUColor, encoder: MTLRenderCommandEncoder) {
         guard points.count > 1 else { return }
         submit(points.map { GPUVertex(CGPoint(x: screenX($0.x), y: $0.y), color) }, primitive: .lineStrip, encoder: encoder)
     }
 
+    // MARK: - Primitive construction
+
+    /// Emits a rectangle as two triangles because Metal has no rectangle primitive.
     private func rectangle(center: CGPoint, size: CGSize, color: GPUColor, encoder: MTLRenderCommandEncoder) {
         let x = center.x, y = center.y, w = size.width / 2, h = size.height / 2
         submit([
@@ -689,6 +760,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         submit([GPUVertex(a, color), GPUVertex(b, color), GPUVertex(c, color)], primitive: .triangle, encoder: encoder)
     }
 
+    /// Approximates a circle with a configurable triangle fan; y is aspect-corrected.
     private func circle(center: CGPoint, radius: Double, color: GPUColor, segments: Int = 28, encoder: MTLRenderCommandEncoder) {
         var vertices: [GPUVertex] = []
         for index in 0..<segments {
@@ -701,6 +773,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
         submit(vertices, primitive: .triangle, encoder: encoder)
     }
 
+    /// Uploads a transient vertex array and records one draw call in the active command encoder.
     private func submit(_ vertices: [GPUVertex], primitive: MTLPrimitiveType, encoder: MTLRenderCommandEncoder) {
         guard let device, !vertices.isEmpty,
               let buffer = device.makeBuffer(bytes: vertices, length: MemoryLayout<GPUVertex>.stride * vertices.count) else { return }
@@ -718,6 +791,7 @@ final class MetalWorldRenderer: NSObject, MTKViewDelegate {
     }
 }
 
+/// Coarse rig families used to give different animal bodies plausible motion.
 private enum AnimalMotionStyle {
     case quadruped
     case walker
@@ -728,6 +802,8 @@ private enum AnimalMotionStyle {
     case still
 }
 
+/// CPU representation matching the `Vertex` layout in the embedded Metal shader.
+/// Explicit padding aligns the color SIMD value to the layout Metal expects.
 private struct GPUVertex {
     var position: SIMD2<Float>
     var padding = SIMD2<Float>(repeating: 0)
@@ -739,6 +815,7 @@ private struct GPUVertex {
     }
 }
 
+/// Vertex layout for a textured rectangle, pairing normalized position with UV coordinates.
 private struct TextureVertex {
     var position: SIMD2<Float>
     var uv: SIMD2<Float>
@@ -749,6 +826,7 @@ private struct TextureVertex {
     }
 }
 
+/// Small renderer-native RGBA value that avoids bridging UIColor for every primitive and frame.
 struct GPUColor {
     let r: Float
     let g: Float
@@ -760,6 +838,7 @@ struct GPUColor {
     }
 
     init(hex: String) {
+        // Catalog colors use six-digit RGB. Invalid input intentionally becomes black.
         let value = UInt64(hex.replacingOccurrences(of: "#", with: ""), radix: 16) ?? 0
         r = Float((value >> 16) & 0xff) / 255
         g = Float((value >> 8) & 0xff) / 255
@@ -768,6 +847,7 @@ struct GPUColor {
     }
 }
 
+/// Retained for UIKit image-rasterization call sites that need the same catalog hex convention.
 private extension UIColor {
     convenience init(hex: String) {
         let value = UInt64(hex.replacingOccurrences(of: "#", with: ""), radix: 16) ?? 0

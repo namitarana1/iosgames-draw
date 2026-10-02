@@ -1,6 +1,11 @@
 import Foundation
 import SwiftUI
 
+/// Complete serializable state of one child-created world.
+///
+/// Positions use world-normalized coordinates: `y` is always in the visible
+/// 0...1 vertical range, while `x` may extend from 0 up to `sceneWidth`. This
+/// allows the stage to grow horizontally without storing device-specific pixels.
 struct DrawtopiaWorld: Codable {
     var name = "My First World"
     var terrain: Terrain = .meadow
@@ -9,6 +14,7 @@ struct DrawtopiaWorld: Codable {
     var strokes: [DrawingStroke] = []
     var items: [WorldItem] = []
 
+    /// Explicit keys support backward-compatible decoding as the world format grows.
     private enum CodingKeys: String, CodingKey {
         case name, terrain, weather, sceneWidth, strokes, items
     }
@@ -29,6 +35,8 @@ struct DrawtopiaWorld: Codable {
         self.items = items
     }
 
+    /// Loads old saves defensively. Missing fields receive modern defaults, so a
+    /// world created before effects or horizontal expansion remains playable.
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         name = try values.decodeIfPresent(String.self, forKey: .name) ?? "My First World"
@@ -40,6 +48,7 @@ struct DrawtopiaWorld: Codable {
     }
 }
 
+/// Optional, mutually exclusive effect that is rendered only during Play mode.
 enum SceneWeather: String, Codable, CaseIterable, Identifiable {
     case clear, rain, cloudy, windy, snow
 
@@ -64,6 +73,7 @@ enum SceneWeather: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Base environment responsible for the palette and procedural terrain layers.
 enum Terrain: String, Codable, CaseIterable, Identifiable {
     case meadow, desert, ocean, moon
 
@@ -87,6 +97,7 @@ enum Terrain: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// Two-color palette used by SwiftUI previews and terrain-selection UI.
     var colors: [Color] {
         switch self {
         case .meadow: [Color(red: 0.55, green: 0.86, blue: 0.98), Color(red: 0.56, green: 0.82, blue: 0.42)]
@@ -97,6 +108,8 @@ enum Terrain: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Resolution-independent point used by drawings and custom vector shapes.
+/// `x` can exceed 1 for content drawn on later horizontal scene pages.
 struct NormalizedPoint: Codable {
     var x: Double
     var y: Double
@@ -106,6 +119,7 @@ struct NormalizedPoint: Codable {
         self.y = y
     }
 
+    /// Converts a view-space point to normalized coordinates for persistence.
     init(_ point: CGPoint, in size: CGSize) {
         x = size.width > 0 ? point.x / size.width : 0
         y = size.height > 0 ? point.y / size.height : 0
@@ -114,6 +128,7 @@ struct NormalizedPoint: Codable {
     var cgPoint: CGPoint { CGPoint(x: x, y: y) }
 }
 
+/// One uninterrupted finger or Pencil stroke drawn by the child.
 struct DrawingStroke: Identifiable, Codable {
     var id = UUID()
     var points: [NormalizedPoint]
@@ -121,6 +136,8 @@ struct DrawingStroke: Identifiable, Codable {
     var width: Double
 }
 
+/// Reusable named shape learned from one or more of the child's own strokes.
+/// Paths are normalized into a square so they can be rendered at any size.
 struct CustomShapeDefinition: Identifiable, Codable {
     var id: String
     var name: String
@@ -129,6 +146,8 @@ struct CustomShapeDefinition: Identifiable, Codable {
     var createdAt: Date
 }
 
+/// A catalog or custom shape placed in the horizontally scrolling world.
+/// `shapeID` links to either `ShapeCatalog` or a `CustomShapeDefinition`.
 struct WorldItem: Identifiable, Codable {
     var id = UUID()
     var shapeID: String
@@ -136,6 +155,7 @@ struct WorldItem: Identifiable, Codable {
     var y: Double
     var scale: Double = 1
 
+    // `kind` is retained solely to migrate the earliest saved-world prototype.
     private enum CodingKeys: String, CodingKey { case id, shapeID, kind, x, y, scale }
 
     init(id: UUID = UUID(), shapeID: String, x: Double, y: Double, scale: Double = 1) {
@@ -146,6 +166,7 @@ struct WorldItem: Identifiable, Codable {
         self.scale = scale
     }
 
+    /// Decodes both the current `shapeID` field and the legacy `kind` field.
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
@@ -167,6 +188,7 @@ struct WorldItem: Identifiable, Codable {
     }
 }
 
+/// Mutually exclusive gesture interpretation used by `WorldCanvasView`.
 enum CreatorTool: String, CaseIterable, Identifiable {
     case draw, build, erase
     var id: String { rawValue }
@@ -181,15 +203,23 @@ enum CreatorTool: String, CaseIterable, Identifiable {
     }
 }
 
+/// Central spatial policy shared by input handling and Metal rendering.
+///
+/// Keeping these rules outside the views is important: a prohibited object is
+/// constrained when it is placed, dragged, loaded from an older save, and drawn.
+/// The mountain interval is intentionally decorative and non-interactive.
 enum SceneLayout {
+    /// Semantic region in which a shape may be placed.
     enum PlacementZone {
         case sky, land, flexible
     }
 
+    /// Safe center-point ranges leave room around large shapes at screen edges.
     static let skyRange = 0.08...0.45
     static let mountainRange = 0.46...0.64
     static let landRange = 0.68...0.92
 
+    /// Boundary at which foreground terrain begins for each environment.
     static func groundLine(for terrain: Terrain) -> Double {
         switch terrain {
         case .meadow: 0.64
@@ -199,6 +229,9 @@ enum SceneLayout {
         }
     }
 
+    /// Classifies a shape using explicit exceptions first and catalog categories
+    /// second. Explicit lists handle cases such as birds that share an animal
+    /// category with land-bound species.
     static func placementZone(for shapeID: String) -> PlacementZone {
         guard let shape = ShapeCatalog.byID[shapeID] else { return .flexible }
         let skyAnimals: Set<String> = ["bird", "owl", "eagle", "butterfly", "bee", "ladybug"]
@@ -223,6 +256,9 @@ enum SceneLayout {
         return .flexible
     }
 
+    /// Returns the nearest legal vertical coordinate for a shape.
+    /// Flexible artwork may use Sky or Land, but is snapped across Mountains so
+    /// no object can ever be left inside the backdrop-only band.
     static func constrainedY(for shapeID: String, proposedY: Double) -> Double {
         switch placementZone(for: shapeID) {
         case .sky:
@@ -241,6 +277,7 @@ enum SceneLayout {
 }
 
 extension Color {
+    /// Creates a SwiftUI color from the catalog's six-digit RGB notation.
     init(hex: String) {
         let value = UInt64(hex.replacingOccurrences(of: "#", with: ""), radix: 16) ?? 0
         self.init(
