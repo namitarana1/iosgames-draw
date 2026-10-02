@@ -1,0 +1,119 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 77;
+	objects = {
+
+		A10000000000000000000001 /* DrawtopiaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* DrawtopiaApp.swift */; };
+		A10000000000000000000002 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* Models.swift */; };
+		A10000000000000000000003 /* WorldStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* WorldStore.swift */; };
+		A10000000000000000000004 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* ContentView.swift */; };
+		A10000000000000000000005 /* WorldCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* WorldCanvasView.swift */; };
+		A10000000000000000000007 /* MetalWorldView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* MetalWorldView.swift */; };
+		A10000000000000000000008 /* ShapeMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* ShapeMatcher.swift */; };
+		A10000000000000000000009 /* ShapeCatalog.json in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* ShapeCatalog.json */; };
+
+		A20000000000000000000001 /* DrawtopiaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawtopiaApp.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 /* WorldStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorldStore.swift; sourceTree = "<group>"; };
+		A20000000000000000000004 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A20000000000000000000005 /* WorldCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorldCanvasView.swift; sourceTree = "<group>"; };
+		A20000000000000000000006 /* Drawtopia.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = Drawtopia.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000007 /* MetalWorldView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalWorldView.swift; sourceTree = "<group>"; };
+		A20000000000000000000008 /* ShapeMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShapeMatcher.swift; sourceTree = "<group>"; };
+		A20000000000000000000009 /* ShapeCatalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ShapeCatalog.json; sourceTree = "<group>"; };
+
+		A30000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A30000000000000000000002 /* Drawtopia */,
+				A30000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A30000000000000000000002 /* Drawtopia */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000001 /* DrawtopiaApp.swift */,
+				A20000000000000000000002 /* Models.swift */,
+				A20000000000000000000003 /* WorldStore.swift */,
+				A20000000000000000000004 /* ContentView.swift */,
+				A20000000000000000000005 /* WorldCanvasView.swift */,
+				A20000000000000000000007 /* MetalWorldView.swift */,
+				A20000000000000000000008 /* ShapeMatcher.swift */,
+				A20000000000000000000009 /* ShapeCatalog.json */,
+			);
+			path = Drawtopia;
+			sourceTree = "<group>";
+		};
+		A30000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (A20000000000000000000006 /* Drawtopia.app */,);
+			name = Products;
+			sourceTree = "<group>";
+		};
+
+		A40000000000000000000001 /* Drawtopia */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A70000000000000000000002 /* Build configuration list for PBXNativeTarget "Drawtopia" */;
+			buildPhases = (
+				A50000000000000000000001 /* Sources */,
+				A50000000000000000000002 /* Frameworks */,
+				A50000000000000000000003 /* Resources */,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = Drawtopia;
+			productName = Drawtopia;
+			productReference = A20000000000000000000006 /* Drawtopia.app */;
+			productType = "com.apple.product-type.application";
+		};
+
+		A50000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000001 /* DrawtopiaApp.swift in Sources */,
+				A10000000000000000000002 /* Models.swift in Sources */,
+				A10000000000000000000003 /* WorldStore.swift in Sources */,
+				A10000000000000000000004 /* ContentView.swift in Sources */,
+				A10000000000000000000005 /* WorldCanvasView.swift in Sources */,
+				A10000000000000000000007 /* MetalWorldView.swift in Sources */,
+				A10000000000000000000008 /* ShapeMatcher.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A50000000000000000000002 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A50000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000009 /* ShapeCatalog.json in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+
+		A60000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = { A40000000000000000000001 = {CreatedOnToolsVersion = 27.0;}; };
+			};
+			buildConfigurationList = A70000000000000000000001 /* Build configuration list for PBXProject "Drawtopia" */;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = A30000000000000000000001;
+			productRefGroup = A30000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (A40000000000000000000001 /* Drawtopia */,);
+		};
+
+		A80000000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0;}; name = Debug; };
+		A80000000000000000000002 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_VERSION = 5.0;}; name = Release; };
+		A80000000000000000000003 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = ""; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = Drawtopia; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games"; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES; INFOPLIST_KEY_UILaunchScreen_Generation = YES; MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = com.example.Drawtopia; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Debug; };
+		A80000000000000000000004 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = ""; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = Drawtopia; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games"; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES; INFOPLIST_KEY_UILaunchScreen_Generation = YES; MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = com.example.Drawtopia; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Release; };
+
+		A70000000000000000000001 /* Build configuration list for PBXProject "Drawtopia" */ = {isa = XCConfigurationList; buildConfigurations = (A80000000000000000000001 /* Debug */, A80000000000000000000002 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A70000000000000000000002 /* Build configuration list for PBXNativeTarget "Drawtopia" */ = {isa = XCConfigurationList; buildConfigurations = (A80000000000000000000003 /* Debug */, A80000000000000000000004 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+	};
+	rootObject = A60000000000000000000001 /* Project object */;
+}
